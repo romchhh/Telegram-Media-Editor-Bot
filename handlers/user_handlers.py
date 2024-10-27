@@ -1,13 +1,12 @@
 from main import bot, dp
-from data.config import *
-from filters.filters import *
+from data.config import token
 from keyboards.user_keyboards import get_start_keyboard
 from states.user_states import VerifyUserState
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-from database.user_db import *
+from database.user_db import add_user, check_user
 
 import random
 
@@ -33,14 +32,12 @@ def generate_math_question():
     correct_answer = num1 + num2
     return num1, num2, correct_answer
 
-@dp.message_handler(IsPrivate(), commands=["start"])
+@dp.message_handler(commands=["start"])
 @dp.throttled(antiflood, rate=1)
 async def start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user_name = message.from_user.username
     user_first_name = message.from_user.first_name
-
-    create_table()
 
     if check_user(user_id):
         photo_path = 'data/posterLogo.png'

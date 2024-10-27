@@ -27,16 +27,24 @@ def cancel_button():
 
 def edit_media(user_data):
     effect_names = {
-        "colorx": "Змінити колір (яскравість)",
-        "saturation": "Насиченість",
-        "hue": "Зміна тону",
-        "color_overlay": "Перекриття кольорів (червоний)",
-        "sepia": "Сепія",
-        "filter_effect": "Ефект фільтра (яскравість та контраст)",
-        "gamma_correction": "Гамма-корекція"
+        "blurred": "Розмитий",
+        "black": "Чорний фон"
     }
+    background_path = user_data.get('background', "")
+    if background_path.endswith('.mp4'):
+        selected_effect_name = "Відео"
+    elif background_path.endswith('.jpg'):
+        selected_effect_name = "Фото"
+    else:
+        selected_effect_name = effect_names.get(user_data.get('background'), "")
+        
+    position_names = {
+        "top": "Зверху",
+        "centre": "Центр",
+        "bottom": "Знизу"
+    }
+    selected_position = position_names.get(user_data.get('position'), "")
 
-    selected_effect_name = effect_names.get(user_data.get('effect'), "")
     mirror_status = "✅Віддзеркалення" if user_data.get('mirror', 0) == 1 else "☑️Віддзеркалення"
     fragment_count = user_data.get('fragment_count', 0)
     segment_length = user_data.get('segment_length', 0)
@@ -66,7 +74,8 @@ def edit_media(user_data):
     keyboard.add(
         InlineKeyboardButton(f"Фрагменти: {fragment_count}" if fragment_count > 0 else "Фрагменти", callback_data="fragment_count"),
         InlineKeyboardButton(f"Довжина: {segment_length_label}", callback_data="segment_length"),
-        InlineKeyboardButton(f"Фільтр: {selected_effect_name}", callback_data="effect"),
+        InlineKeyboardButton(f"Задній фон: {selected_effect_name}", callback_data="background"),
+        InlineKeyboardButton(f"Позиція: {selected_position}", callback_data="position"),
         InlineKeyboardButton(mirror_status, callback_data="reflection"),
         InlineKeyboardButton(f"Якість: {quality}", callback_data="quatity"),
     )
@@ -76,7 +85,6 @@ def edit_media(user_data):
     )
 
     return keyboard
-
 
 
 

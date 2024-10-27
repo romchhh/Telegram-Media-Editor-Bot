@@ -3,12 +3,11 @@ from main import bot, dp
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
 from keyboards.user_keyboards import *
 import os, asyncio, aiofiles, shutil, requests
-from keyboards.user_keyboards import *
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from moviepy.editor import VideoFileClip, vfx, CompositeVideoClip, ImageClip
 from states.user_states import VideoProcessingState
 from aiogram.dispatcher import FSMContext
-from data.config import *
+from data.config import token
 from io import BytesIO
 
 user_data = {}
@@ -33,7 +32,8 @@ async def handle_back_to_edit(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text("Оберіть параметри:",
                                      reply_markup=edit_media(user_data[user_id]))
     
-@dp.callback_query_handler(lambda c: c.data == "back_to_edit_with_state", state=VideoProcessingState.waiting_for_footage)
+@dp.callback_query_handler(lambda c: c.data == "back_to_edit_with_state", 
+                           state=[VideoProcessingState.waiting_for_footage, VideoProcessingState.waiting_for_background])
 async def handle_back_to_edit(callback_query: types.CallbackQuery, state: FSMContext):
     user_id = callback_query.from_user.id
     await callback_query.message.edit_text("Оберіть параметри:",
@@ -53,7 +53,7 @@ async def handle_upload_video(callback_query: types.CallbackQuery):
 downloads = {}
 
 
-@dp.message_handler(content_types=[types.ContentType.VIDEO, types.ContentType.DOCUMENT], state="*")  
+@dp.message_handler(content_types=[types.ContentType.PHOTO, types.ContentType.VIDEO, types.ContentType.DOCUMENT], state="*")  
 async def process_video(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     if user_id not in user_data:
@@ -97,6 +97,45 @@ async def process_video(message: types.Message, state: FSMContext):
 
         await state.finish()
         return
+    
+    elif state_data == VideoProcessingState.waiting_for_background.state:
+
+        if message.content_type == types.ContentType.VIDEO:
+            background = message.video
+            background_ext = 'mp4'
+        elif message.content_type == types.ContentType.PHOTO:
+            background = message.photo[-1] 
+            background_ext = 'jpg'
+        else:
+            await message.answer("⚠️ Надішліть лише відео або фото у цьому стані.")
+            return
+
+        file_info = await bot.get_file(background.file_id)
+        file_path = file_info.file_path
+        background_file = await bot.download_file(file_path)
+
+        background_path = f"downloads/{user_id}/background/{background.file_id}.{background_ext}"
+        os.makedirs(os.path.dirname(background_path), exist_ok=True)
+
+        with open(background_path, 'wb') as f:
+            f.write(background_file.read())
+
+        if 'background' in user_data[user_id]:
+            old_background_path = user_data[user_id]['background']
+            if os.path.exists(old_background_path):
+                os.remove(old_background_path)
+
+        user_data[user_id]['background'] = background_path
+
+        print(user_data[user_id])
+
+        await message.answer("Оберіть параметри:", reply_markup=edit_media(user_data[user_id]))
+
+        await state.finish()
+        return
+    
+    
+    
     file_extension = ""
     file_unique_id = ""
 
@@ -177,52 +216,84 @@ async def download_file(user_id):
         del downloads[user_id]
 
 
-@dp.callback_query_handler(lambda c: c.data == 'effect')
+@dp.callback_query_handler(lambda c: c.data == 'background')
 async def effect_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     if user_id not in user_data:
         user_data[user_id] = {}
 
     effects = [
-        ("Змінити колір (яскравість)", "colorx"),
-        ("Насиченість", "saturation"),
-        ("Зміна тону", "hue"),
-        ("Перекриття кольорів (червоний)", "color_overlay"),
-        ("Сепія", "sepia"),
-        ("Ефект фільтра (яскравість та контраст)", "filter_effect"),
-        ("Гамма-корекція", "gamma_correction"),
+        ("Розмитий", "blurred"),
+        ("Чорний фон", "black"),
     ]
 
     keyboard = InlineKeyboardMarkup(row_width=2)
     for effect_name, effect_code in effects:
-        button = InlineKeyboardButton(effect_name, callback_data=f"effect_{effect_code}")
+        button = InlineKeyboardButton(effect_name, callback_data=f"background_{effect_code}")
         keyboard.add(button) 
+    keyboard.add(InlineKeyboardButton("Відео фон", callback_data=f"video_background"))
     keyboard.add(InlineKeyboardButton("← Назад", callback_data=f"back_to_edit"))
 
     await callback_query.message.edit_text("Оберіть ефект:", reply_markup=keyboard)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('effect_'))
-async def effect_choice_callback(callback_query: CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data.startswith('background_'))
+async def background_choice_callback(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    effect_code = callback_query.data.split('_')[1]
+    background_code = callback_query.data.split('_')[1]
 
-    user_data[user_id]['effect'] = effect_code
+    user_data[user_id]['background'] = background_code
 
-    effect_names = {
-        "colorx": "Змінити колір (яскравість)",
-        "saturation": "Насиченість",
-        "hue": "Зміна тону",
-        "color_overlay": "Перекриття кольорів (червоний)",
-        "sepia": "Сепія",
-        "filter_effect": "Ефект фільтра (яскравість та контраст)",
-        "gamma_correction": "Гамма-корекція"
+    background_names = {
+        "blurred": "Розмитий",
+        "black": "Чорний фон"
     }
-    selected_effect_name = effect_names.get(effect_code, "Невідомий ефект")
+    selected_effect_name = background_names.get(background_code, "Невідомий ефект")
     await callback_query.message.edit_text(
         f"Оберіть параметри:",
         reply_markup=edit_media(user_data[user_id])
     )
 
+
+
+@dp.callback_query_handler(lambda c: c.data == 'position')
+async def position_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    if user_id not in user_data:
+        user_data[user_id] = {}
+
+    positions = [
+        ("Зверху", "top"),
+        ("Центр", "centre"),
+        ("Знизу", "bottom"),
+    ]
+
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for position_name, position_code in positions:
+        button = InlineKeyboardButton(position_name, callback_data=f"position_{position_code}")
+        keyboard.add(button) 
+    keyboard.add(InlineKeyboardButton("← Назад", callback_data=f"back_to_edit"))
+
+    await callback_query.message.edit_text(f"Оберіть параметри:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('position_'))
+async def position_choice_callback(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    position_code = callback_query.data.split('_')[1]
+
+    user_data[user_id]['position'] = position_code
+
+    position_names = {
+        "top": "Зверху",
+        "centre": "Центр",
+        "bottom": "Знизу"
+    }
+    selected_effect_name = position_names.get(position_code, "Невідомий ефект")
+    await callback_query.message.edit_text(
+        f"Оберіть параметри:",
+        reply_markup=edit_media(user_data[user_id])
+    )
+    
+    
 
 @dp.callback_query_handler(lambda c: c.data == 'reflection')
 async def reflection_callback(callback_query: types.CallbackQuery):
@@ -358,6 +429,16 @@ async def add_footage_callback(callback_query: CallbackQuery, state: FSMContext)
     keyboard.add(InlineKeyboardButton("← Назад", callback_data=f"back_to_edit_with_state"))
     await callback_query.message.edit_text("Будь ласка, надішліть футаж (відео або фото).", reply_markup=keyboard)
 
+
+@dp.callback_query_handler(lambda c: c.data == 'video_background')
+async def add_footage_callback(callback_query: CallbackQuery, state: FSMContext):
+    await VideoProcessingState.waiting_for_background.set()
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(InlineKeyboardButton("← Назад", callback_data=f"back_to_edit_with_state"))
+    await callback_query.message.edit_text("Будь ласка, надішліть фон (відео або фото).", reply_markup=keyboard)
+    
+    
+    
 @dp.callback_query_handler(lambda c: c.data == "quatity")
 async def process_quality_selection(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id

@@ -8,3 +8,5 @@ class DownloadState(StatesGroup):
     
 class VideoProcessingState(StatesGroup):
     waiting_for_footage = State()
+    waiting_for_background = State()
+    
