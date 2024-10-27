@@ -1,2 +1,10 @@
 .env
 config.py
+
+
+__pycache__
+__pycache__/*
+
+downloads/*.mp4
+*.mp4
+*.mp3
