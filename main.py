@@ -4,7 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.utils import executor
-from data.config import *
+from data.config import token
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 

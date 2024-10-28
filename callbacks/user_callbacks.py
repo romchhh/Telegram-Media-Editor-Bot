@@ -5,6 +5,7 @@ from keyboards.user_keyboards import *
 import os, asyncio, aiofiles, shutil, requests
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from moviepy.editor import VideoFileClip, vfx, CompositeVideoClip, ImageClip
+from moviepy_video_handler import VideoProcessor
 from states.user_states import VideoProcessingState
 from aiogram.dispatcher import FSMContext
 from data.config import token
@@ -200,6 +201,7 @@ async def download_file(user_id):
         response = requests.get(file_url)
         if response.status_code == 200:
             destination = f"downloads/{user_id}/{file_id}{file_extension}"
+            user_data[user_id]['main_video'] = destination
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             with open(destination, 'wb') as f:
                 f.write(response.content)
@@ -263,7 +265,7 @@ async def position_callback(callback_query: types.CallbackQuery):
 
     positions = [
         ("Зверху", "top"),
-        ("Центр", "centre"),
+        ("Центр", "center"),
         ("Знизу", "bottom"),
     ]
 
@@ -482,36 +484,37 @@ async def next_callback(callback_query: types.CallbackQuery):
     if user_id not in user_data:
         user_data[user_id] = {}
 
-    video_url = user_data[user_id].get('video_url')
-    if not video_url:
-        await callback_query.message.answer("⚠️ Помилка: Посилання на відео не знайдено.")
-        return
+    final_video_name = "final_video.mp4"
 
-    # Download the video in chunks
-    local_video_path = f"downloads/{user_id}/video.mp4"
-    os.makedirs(os.path.dirname(local_video_path), exist_ok=True)
+    user_data[user_id].get("mirror", 0) # 1 or 0
+    # state = await dp.storage.get_state(callback_query.chat_instance)
+    # print(state)
 
-    with requests.get(video_url, stream=True) as r:
-        r.raise_for_status()
-        with open(local_video_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+    background_option = user_data[user_id].get("background", "black")
+    background_video = None
+    if background_option == "video":
+        background_video = user_data[user_id].get("background_video"),
+    footage_path = user_data[user_id].get("footage", None)
+    position = user_data[user_id].get("position", "center")
 
-    # Process the video with moviepy
-    clip = VideoFileClip(local_video_path)
-    interesting_moments = clip.fx(vfx.blackwhite)
-    interesting_moments = interesting_moments.subclip(0, 120)  # Cut the first 2 minutes
-    output_path = f"downloads/{user_id}/output.mp4"
-    interesting_moments.write_videofile(output_path, codec='libx264')
 
-    # Send the processed video to the user
-    with open(output_path, 'rb') as video:
-        await bot.send_video(user_id, video, caption="Ось ваш оброблений фрагмент відео!")
+    print(user_data[user_id])
 
-    # Clean up
-    os.remove(local_video_path)
-    os.remove(output_path)
+    video_processor = VideoProcessor(user_data[user_id].get("main_video"))
+    video_processor.process(
+        output_path=final_video_name,
+        footage_path=footage_path,
+        position=position,
+        background_option=background_option,
+        background_video_path=background_video
+    )
 
+    with open(final_video_name, 'rb') as final_file:
+        await bot.send_video(callback_query.message.chat.id, final_file)
+
+    if footage_path:
+        os.remove(footage_path)
+    os.remove(final_video_name)
     await callback_query.message.answer("Обробка завершена!")
     
     

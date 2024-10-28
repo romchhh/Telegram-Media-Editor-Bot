@@ -174,11 +174,12 @@ if __name__ == "__main__":
     #     backround_video_path="background1.mp4",
     # )
 
-    input_video = "long_input.mp4"
+    input_video = "input.mp4"
     processor = VideoProcessor(input_video)
     processor.process(
         "long_output.mp4",
-        "papich2.mp4",
+        footage_path=None,
+        # "papich2.mp4",
         position="top",
         background_option="video",
         background_video_path="background1.mp4",
