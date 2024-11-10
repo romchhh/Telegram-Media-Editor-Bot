@@ -35,7 +35,9 @@ class VideoProcessor:
                 return self.create_blurred_background()
             case "video":
                 if background_video_path:
-                    return self.create_video_background(background_video_path)
+                    background = self.create_video_background(background_video_path)
+                    background.close()
+                    return background
                 else:
                     raise ValueError("No video provided for background")
 
@@ -100,7 +102,8 @@ class VideoProcessor:
             )
         else:
             final_video = CompositeVideoClip([background, resized_video.set_position(("center", position))])
-
+        # if background_video_path:
+        #     background.close()
         return final_video
 
     def apply_greenscreen_effect(self, background_video, greenscreen_path):
@@ -132,7 +135,8 @@ class VideoProcessor:
             masked_gs = cv2.bitwise_and(combined_frame, combined_frame, mask=(1 - mask).astype(np.uint8))
             return cv2.add(masked_bg, masked_gs)
 
-        return background_video.fl(composite_frame, apply_to='mask')
+        
+        return background_video.fl(composite_frame, apply_to='mask'), greenscreen
 
     def process(self, output_path, footage_path: None | str, position="center", background_option="blurred", background_video_path=None):
         final_video = self.resize_and_position_video(
@@ -142,9 +146,14 @@ class VideoProcessor:
             )
 
         if footage_path:
-            final_video = self.apply_greenscreen_effect(final_video, footage_path)
-        
+            final_video, greenscreen = self.apply_greenscreen_effect(final_video, footage_path)
+            
+
         final_video.write_videofile(output_path, codec="libx264", threads=8, fps=30)
+        final_video.close()
+        if footage_path:
+            greenscreen.close()
+
 
 if __name__ == "__main__":
     input_video = "background.mp4"
@@ -174,14 +183,23 @@ if __name__ == "__main__":
     #     backround_video_path="background1.mp4",
     # )
 
-    input_video = "input.mp4"
+    input_video = "BAACAgIAAxkDAAIEJ2chJGGMqJUnXcye2kMVu4rTIuVgAAJJZgACi3YJSQHlBNjvOYKdNgQ.mp4"
     processor = VideoProcessor(input_video)
     processor.process(
         "long_output.mp4",
         footage_path=None,
         # "papich2.mp4",
-        position="top",
-        background_option="video",
-        background_video_path="background1.mp4",
+        position="center",
+        background_option="black",
+        # background_video_path="background1.mp4",
     )
+
+    # processor.process(
+    #     "long_output.mp4",
+    #     footage_path=None,
+    #     # "papich2.mp4",
+    #     position="top",
+    #     background_option="video",
+    #     background_video_path="background1.mp4",
+    # )
     

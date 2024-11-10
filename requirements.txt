@@ -3,3 +3,4 @@ aiogram==2.25.1
 APScheduler==3.10.4
 moviepy==1.0.3
 Requests==2.32.3
+pytubefix==8.2.0

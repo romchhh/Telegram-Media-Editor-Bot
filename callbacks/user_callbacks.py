@@ -1,3 +1,7 @@
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Process
+import re
+from pytubefix import YouTube
 from aiogram import types, Dispatcher
 from main import bot, dp
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
@@ -6,12 +10,14 @@ import os, asyncio, aiofiles, shutil, requests
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from moviepy.editor import VideoFileClip, vfx, CompositeVideoClip, ImageClip
 from moviepy_video_handler import VideoProcessor
-from states.user_states import VideoProcessingState
+from states.user_states import VideoProcessingState, DownloadState
 from aiogram.dispatcher import FSMContext
 from data.config import token
 from io import BytesIO
 
 user_data = {}
+
+process_pool = ProcessPoolExecutor()
 
 @dp.callback_query_handler(lambda c: c.data == "back")
 async def handle_upload_video(callback_query: types.CallbackQuery):
@@ -47,7 +53,7 @@ async def handle_back_to_edit(callback_query: types.CallbackQuery, state: FSMCon
     
 @dp.callback_query_handler(lambda c: c.data == "upload_video")
 async def handle_upload_video(callback_query: types.CallbackQuery):
-    await callback_query.message.edit_caption("📹 Будь ласка, надішліть ваше відео у форматі MP4, MOV або іншому підтримуваному форматі.", reply_markup=back_markup())
+    await callback_query.message.edit_caption("📹 Будь ласка, надішліть ваше відео у форматі MP4, MOV, посиланням на Youtube або іншому підтримуваному форматі.", reply_markup=back_markup())
     await bot.answer_callback_query(callback_query.id)
     
     
@@ -135,7 +141,7 @@ async def process_video(message: types.Message, state: FSMContext):
         await state.finish()
         return
     
-    
+
     
     file_extension = ""
     file_unique_id = ""
@@ -162,6 +168,76 @@ async def process_video(message: types.Message, state: FSMContext):
     }
 
     asyncio.create_task(download_file(user_id))
+
+
+
+
+@dp.message_handler(state="*")
+async def process_background_video_text(message: types.Message, state: FSMContext):
+    YOUTUBE_URL_REGEX = r'(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})'
+    user_id = message.from_user.id
+    if user_id not in user_data:
+        user_data[user_id] = {}
+
+    youtube_url = message.text.strip()  # Get the user's message (YouTube link)
+    state_data = await state.get_state()
+    if state_data == VideoProcessingState.waiting_for_background.state:
+        if re.match(YOUTUBE_URL_REGEX, youtube_url):
+            try:
+                yt = YouTube(youtube_url)
+                background_stream = yt.streams.get_highest_resolution()  # Get the highest resolution stream
+                background_file_path = background_stream.download(output_path=f"downloads/{user_id}/background", filename="shorts.mp4")  # Specify the path to save
+
+                # Remove the old background if it exists
+                if 'background' in user_data[user_id]:
+                    old_background_path = user_data[user_id]['background']
+                    if os.path.exists(old_background_path):
+                        os.remove(old_background_path)
+
+                user_data[user_id]['background'] = f"downloads/{user_id}/background/shorts.mp4"
+
+                print(user_data[user_id])
+                print("Фонове відео збережено")
+
+                await message.answer("Оберіть параметри:", reply_markup=edit_media(user_data[user_id]))
+
+                await state.finish()
+                return
+
+            except Exception as e:
+                await message.answer(f"Виникла помилка при завантаженні фонового відео: {str(e)}")
+                return
+        else:
+            await message.answer("Будь ласка, надішліть дійсну посилання на відео YouTube.")
+    elif state_data == VideoProcessingState.waiting_for_footage.state:
+        return
+    
+    if re.match(YOUTUBE_URL_REGEX, youtube_url):
+        try:
+            yt = YouTube(youtube_url)
+            background_stream = yt.streams.get_highest_resolution()  # Get the highest resolution stream
+            background_file_path = background_stream.download(output_path=f"downloads/{user_id}", filename="main.mp4")  # Specify the path to save
+
+            # Remove the old background if it exists
+            if 'background' in user_data[user_id]:
+                old_background_path = user_data[user_id]['background']
+                if os.path.exists(old_background_path):
+                    os.remove(old_background_path)
+
+            user_data[user_id]['main_video'] = f"downloads/{user_id}/main.mp4"
+
+            print(user_data[user_id])
+            print("Головне відео збережено")
+
+            await message.answer("Оберіть параметри:", reply_markup=edit_media(user_data[user_id]))
+
+            await state.finish()
+            return
+
+        except Exception as e:
+            await message.answer(f"Виникла помилка при завантаженні головного відео: {str(e)}")
+            return
+    
 
 
 async def get_file_path(file_id):
@@ -436,8 +512,8 @@ async def add_footage_callback(callback_query: CallbackQuery, state: FSMContext)
 async def add_footage_callback(callback_query: CallbackQuery, state: FSMContext):
     await VideoProcessingState.waiting_for_background.set()
     keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(InlineKeyboardButton("← Назад", callback_data=f"back_to_edit_with_state"))
-    await callback_query.message.edit_text("Будь ласка, надішліть фон (відео або фото).", reply_markup=keyboard)
+    keyboard.add(InlineKeyboardButton("← Назад", callback_data="back_to_edit_with_state"))
+    await callback_query.message.edit_text("Будь ласка, надішліть фон (відео або фото). Можна посилання Youtube!", reply_markup=keyboard)
     
     
     
@@ -483,7 +559,7 @@ async def next_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     if user_id not in user_data:
         user_data[user_id] = {}
-
+    
     final_video_name = "final_video.mp4"
 
     user_data[user_id].get("mirror", 0) # 1 or 0
@@ -492,31 +568,51 @@ async def next_callback(callback_query: types.CallbackQuery):
 
     background_option = user_data[user_id].get("background", "black")
     background_video = None
-    if background_option == "video":
-        background_video = user_data[user_id].get("background_video"),
+    if "downloads/" in background_option:
+        background_option = "video"
+        background_video = user_data[user_id].get("background")
+    
     footage_path = user_data[user_id].get("footage", None)
     position = user_data[user_id].get("position", "center")
-
+    main_video = user_data[user_id].get("main_video")
 
     print(user_data[user_id])
 
-    video_processor = VideoProcessor(user_data[user_id].get("main_video"))
+    process = Process(
+        target=process_video_task,
+        args=(user_id, main_video, final_video_name, footage_path, position, background_option, background_video)
+    )
+    process.start()
+    
+    process.join()
+    with open(f"{user_id}_{final_video_name}", 'rb') as final_file:
+        await bot.send_video(callback_query.message.chat.id, final_file)
+    
+    
+    cleanup_user_files(user_id, main_video, final_video_name, background_video, footage_path)
+    await callback_query.message.answer("Обробка завершена!")
+    
+    
+def register_callbacks(dp: Dispatcher):
+    dp.register_callback_query_handler(handle_upload_video, lambda c: c.data == 'check')
+
+
+def process_video_task(user_id, main_video, final_video_name, footage_path, position, background_option, background_video):
+    video_processor = VideoProcessor(main_video)
     video_processor.process(
-        output_path=final_video_name,
+        output_path=f"{user_id}_{final_video_name}",
         footage_path=footage_path,
         position=position,
         background_option=background_option,
         background_video_path=background_video
     )
 
-    with open(final_video_name, 'rb') as final_file:
-        await bot.send_video(callback_query.message.chat.id, final_file)
-
+def cleanup_user_files(user_id, main_video, final_video_name, background_video, footage_path):
+    if background_video:
+        os.remove(background_video)
+        del user_data[user_id]["background"]
     if footage_path:
         os.remove(footage_path)
-    os.remove(final_video_name)
-    await callback_query.message.answer("Обробка завершена!")
-    
-    
-def register_callbacks(dp: Dispatcher):
-    dp.register_callback_query_handler(handle_upload_video, lambda c: c.data == 'check')
+        del user_data[user_id]["footage"]
+    os.remove(main_video)
+    os.remove(f"{user_id}_{final_video_name}")
