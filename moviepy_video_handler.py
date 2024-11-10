@@ -6,12 +6,10 @@ from moviepy.video.fx.crop import crop
 import numpy as np
 
 class VideoProcessor:
-    def __init__(self, input_path, target_width=1080, target_height=1920):
-
-        self.input_path = input_path
+    def __init__(self, video: VideoFileClip, target_width=1080, target_height=1920):
         self.target_width = target_width
         self.target_height = target_height
-        self.video = VideoFileClip(input_path)
+        self.video = video
         self.video_duration = self.video.duration
 
     def calculate_new_dimensions(self):
@@ -149,15 +147,15 @@ class VideoProcessor:
             final_video, greenscreen = self.apply_greenscreen_effect(final_video, footage_path)
             
 
-        final_video.write_videofile(output_path, codec="libx264", threads=8, fps=30)
+        final_video.write_videofile(output_path, codec="libx264", threads=8, fps=30, ffmpeg_params=["-preset", "ultrafast"])
         final_video.close()
         if footage_path:
             greenscreen.close()
 
 
 if __name__ == "__main__":
-    input_video = "background.mp4"
-    processor = VideoProcessor(input_video)
+    # input_video = "background.mp4"
+    # processor = VideoProcessor(input_video)
 
     # processor.process(
     #     "black_center.mp4", 
@@ -183,15 +181,14 @@ if __name__ == "__main__":
     #     backround_video_path="background1.mp4",
     # )
 
-    input_video = "BAACAgIAAxkDAAIEJ2chJGGMqJUnXcye2kMVu4rTIuVgAAJJZgACi3YJSQHlBNjvOYKdNgQ.mp4"
-    processor = VideoProcessor(input_video)
+    video = VideoFileClip("main.mp4")
+    processor = VideoProcessor(video)
     processor.process(
-        "long_output.mp4",
-        footage_path=None,
-        # "papich2.mp4",
+        "output.mp4",
+        footage_path="footage.mp4",
         position="center",
-        background_option="black",
-        # background_video_path="background1.mp4",
+        background_option="video",
+        background_video_path="back.mp4",
     )
 
     # processor.process(
