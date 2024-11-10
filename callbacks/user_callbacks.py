@@ -586,7 +586,7 @@ async def next_callback(callback_query: types.CallbackQuery):
     
     process.join()
     with open(f"{user_id}_{final_video_name}", 'rb') as final_file:
-        await bot.send_video(callback_query.message.chat.id, final_file)
+        await bot.send_video(callback_query.message.chat.id, final_file, width=1080, height=1920)
     
     
     cleanup_user_files(user_id, main_video, final_video_name, background_video, footage_path)
@@ -598,7 +598,8 @@ def register_callbacks(dp: Dispatcher):
 
 
 def process_video_task(user_id, main_video, final_video_name, footage_path, position, background_option, background_video):
-    video_processor = VideoProcessor(main_video)
+    video = VideoFileClip(main_video)
+    video_processor = VideoProcessor(video)
     video_processor.process(
         output_path=f"{user_id}_{final_video_name}",
         footage_path=footage_path,
