@@ -6,9 +6,13 @@ from moviepy.video.fx.crop import crop
 import numpy as np
 
 class VideoProcessor:
-    def __init__(self, video: VideoFileClip, target_width=1080, target_height=1920):
-        self.target_width = target_width
-        self.target_height = target_height
+    def __init__(self, video: VideoFileClip, quality="1080p"):
+        if quality == "1080p":
+            self.target_width=1080 
+            self.target_height=1920
+        else:
+            self.target_width = 720
+            self.target_height = 1080
         self.video = video
         self.video_duration = self.video.duration
 
@@ -147,7 +151,7 @@ class VideoProcessor:
             final_video, greenscreen = self.apply_greenscreen_effect(final_video, footage_path)
             
 
-        final_video.write_videofile(output_path, codec="libx264", threads=8, fps=30, ffmpeg_params=["-preset", "ultrafast"])
+        final_video.write_videofile(output_path, codec="hevc", threads=8, fps=30, ffmpeg_params=["-preset", "ultrafast"])
         final_video.close()
         if footage_path:
             greenscreen.close()

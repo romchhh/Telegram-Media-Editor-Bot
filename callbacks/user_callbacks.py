@@ -1,5 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Process
+from pathlib import Path
 import re
 from pytubefix import YouTube
 from aiogram import types, Dispatcher
@@ -10,6 +11,7 @@ import os, asyncio, aiofiles, shutil, requests
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from moviepy.editor import VideoFileClip, vfx, CompositeVideoClip, ImageClip
 from moviepy_video_handler import VideoProcessor
+from segmented_video_handler import process_video_in_parallel
 from states.user_states import VideoProcessingState, DownloadState
 from aiogram.dispatcher import FSMContext
 from data.config import token
@@ -184,7 +186,7 @@ async def process_background_video_text(message: types.Message, state: FSMContex
     if state_data == VideoProcessingState.waiting_for_background.state:
         if re.match(YOUTUBE_URL_REGEX, youtube_url):
             try:
-                yt = YouTube(youtube_url)
+                yt = YouTube(youtube_url, use_po_token=True)
                 background_stream = yt.streams.get_highest_resolution()  # Get the highest resolution stream
                 background_file_path = background_stream.download(output_path=f"downloads/{user_id}/background", filename="shorts.mp4")  # Specify the path to save
 
@@ -560,7 +562,7 @@ async def next_callback(callback_query: types.CallbackQuery):
     if user_id not in user_data:
         user_data[user_id] = {}
     
-    final_video_name = "final_video.mp4"
+    # final_video_name = "final_video.mp4"
 
     user_data[user_id].get("mirror", 0) # 1 or 0
     # state = await dp.storage.get_state(callback_query.chat_instance)
@@ -575,21 +577,34 @@ async def next_callback(callback_query: types.CallbackQuery):
     footage_path = user_data[user_id].get("footage", None)
     position = user_data[user_id].get("position", "center")
     main_video = user_data[user_id].get("main_video")
+    fragments_count = user_data[user_id].get("fragment_count", 1)
+    fragments_lenght = user_data[user_id].get("segment_length", None)
+    quality = user_data[user_id].get("quality", "720p")
 
     print(user_data[user_id])
-
-    process = Process(
-        target=process_video_task,
-        args=(user_id, main_video, final_video_name, footage_path, position, background_option, background_video)
-    )
+    try:
+        process = Process(
+            target=process_video_task,
+            args=(user_id, main_video, fragments_count, fragments_lenght, footage_path, position, background_option, background_video, quality
+                #   callback_query, bot
+            )
+        )
+    except Exception as e:
+        await bot.send_message("Error occured")
     process.start()
     
     process.join()
-    with open(f"{user_id}_{final_video_name}", 'rb') as final_file:
-        await bot.send_video(callback_query.message.chat.id, final_file, width=1080, height=1920)
+    
+    folder_path = Path(f"downloads/{user_id}/segments")
+
+    for index, file_path in enumerate(folder_path.glob('*.mp4'), start=1):
+        with open(file_path, mode="rb") as file:
+            await bot.send_video(callback_query.message.chat.id, file, width=1080, height=1920, caption=f"{index} файл!")
     
     
-    cleanup_user_files(user_id, main_video, final_video_name, background_video, footage_path)
+
+
+    cleanup_user_files(user_id, main_video, background_video, footage_path)
     await callback_query.message.answer("Обробка завершена!")
     
     
@@ -597,23 +612,30 @@ def register_callbacks(dp: Dispatcher):
     dp.register_callback_query_handler(handle_upload_video, lambda c: c.data == 'check')
 
 
-def process_video_task(user_id, main_video, final_video_name, footage_path, position, background_option, background_video):
-    video = VideoFileClip(main_video)
-    video_processor = VideoProcessor(video)
-    video_processor.process(
-        output_path=f"{user_id}_{final_video_name}",
+def process_video_task(user_id, main_video, fragments_count, fragments_lenght, footage_path, position, background_option, background_video, quality="1080p"
+        # callback_query, bot
+    ):
+    process_video_in_parallel(
+        main_video,
+        f"downloads/{user_id}/segments",
+        num_segments=fragments_count,
+        segment_duration=fragments_lenght,
         footage_path=footage_path,
         position=position,
         background_option=background_option,
-        background_video_path=background_video
+        background_video_path=background_video,
+        quality=quality
+        # user_id=user_id,
+        # callback_query=callback_query,
+        # bot=bot
     )
 
-def cleanup_user_files(user_id, main_video, final_video_name, background_video, footage_path):
+def cleanup_user_files(user_id, main_video, background_video, footage_path):
     if background_video:
         os.remove(background_video)
         del user_data[user_id]["background"]
     if footage_path:
         os.remove(footage_path)
         del user_data[user_id]["footage"]
-    os.remove(main_video)
-    os.remove(f"{user_id}_{final_video_name}")
+    # os.remove(main_video)
+    # os.remove(f"{user_id}_{final_video_name}")
