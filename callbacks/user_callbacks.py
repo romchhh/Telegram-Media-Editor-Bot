@@ -1,5 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import Process
+from multiprocessing import Process, Queue
 from pathlib import Path
 import re
 from pytubefix import YouTube
@@ -11,8 +11,9 @@ import os, asyncio, aiofiles, shutil, requests
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from moviepy.editor import VideoFileClip, vfx, CompositeVideoClip, ImageClip
 from moviepy_video_handler import VideoProcessor
-from segmented_video_handler import process_video_in_parallel
+from segmented_video_handler import SegmentsTooLongException, process_video_in_parallel
 from states.user_states import VideoProcessingState, DownloadState
+from aiogram.types.input_media import InputMediaVideo
 from aiogram.dispatcher import FSMContext
 from data.config import token
 from io import BytesIO
@@ -422,14 +423,14 @@ async def segment_length_callback(callback_query: types.CallbackQuery):
         user_data[user_id] = {}
 
     durations = [
+        ("Автоматично", "auto"),
         ("15 секунд", 15),
         ("30 секунд", 30),
         ("45 секунд", 45),
         ("1 хвилина", 60),
         ("1.5 хвилини", 90),
         ("2 хвилини", 120),
-        ("2.5 хвилини", 150),
-        ("3 хвилини", 180)
+        ("3 хвилини", 180)        
     ]
 
     keyboard = InlineKeyboardMarkup(row_width=4)
@@ -443,7 +444,8 @@ async def segment_length_callback(callback_query: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data.startswith('set_length_'))
 async def set_length_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    length_value = int(callback_query.data.split('_')[2])  
+
+    length_value = int(callback_query.data.split('_')[2]) if callback_query.data.split('_')[2].isnumeric() else callback_query.data.split('_')[2]
 
     user_data[user_id]['segment_length'] = length_value 
     keyboard = edit_media(user_data[user_id])
@@ -556,17 +558,50 @@ async def process_purchase_premium(callback_query: types.CallbackQuery):
 
 
 
+@dp.callback_query_handler(lambda c: c.data == "tone")
+async def process_tone_selection (callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    if user_id not in user_data:
+        user_data[user_id] = {}
+
+    tones = [
+        -2.0,
+        -1.0,
+        -0.5,
+        0,
+        0.5,
+        1.0,
+        2.0,
+        ]
+
+    keyboard = InlineKeyboardMarkup(row_width=4)
+    for tone in tones:
+        button = InlineKeyboardButton(tone, callback_data=f"set_tone_{str(tone)}")
+        keyboard.add(button)
+
+    keyboard.add(InlineKeyboardButton("← Назад", callback_data="back_to_edit"))
+    await callback_query.message.edit_text("Оберіть тональність:", reply_markup=keyboard)    
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith('set_tone_'))
+async def set_tone_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+
+    length_value = int(callback_query.data.split('_')[2]) if callback_query.data.split('_')[2].isnumeric() else callback_query.data.split('_')[2]
+
+    user_data[user_id]['tone'] = length_value 
+    keyboard = edit_media(user_data[user_id])
+    
+    await callback_query.message.edit_text("Оберіть параметри:", reply_markup=keyboard)
+
+
 @dp.callback_query_handler(lambda c: c.data == 'next')
 async def next_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     if user_id not in user_data:
         user_data[user_id] = {}
     
-    # final_video_name = "final_video.mp4"
-
     user_data[user_id].get("mirror", 0) # 1 or 0
-    # state = await dp.storage.get_state(callback_query.chat_instance)
-    # print(state)
 
     background_option = user_data[user_id].get("background", "black")
     background_video = None
@@ -579,41 +614,57 @@ async def next_callback(callback_query: types.CallbackQuery):
     main_video = user_data[user_id].get("main_video")
     fragments_count = user_data[user_id].get("fragment_count", 1)
     fragments_lenght = user_data[user_id].get("segment_length", None)
+    tone = user_data[user_id].get("tone", 0.0)
+    if fragments_lenght == "auto":
+        fragments_lenght = None
     quality = user_data[user_id].get("quality", "720p")
 
+
+    
     print(user_data[user_id])
-    try:
-        process = Process(
-            target=process_video_task,
-            args=(user_id, main_video, fragments_count, fragments_lenght, footage_path, position, background_option, background_video, quality
-                #   callback_query, bot
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor() as executor:
+        try:
+            await loop.run_in_executor(
+                executor,
+                process_video_task,
+                user_id, main_video, fragments_count, fragments_lenght, footage_path, position, background_option, background_video, quality, tone
             )
-        )
-    except Exception as e:
-        await bot.send_message("Error occured")
-    process.start()
-    
-    process.join()
-    
+        except SegmentsTooLongException as e:
+            await callback_query.message.answer(e)
+            return
+
+    # Retrieve processed video segments
     folder_path = Path(f"downloads/{user_id}/segments")
+    videos_path = list(folder_path.glob('*.mp4'))
 
-    for index, file_path in enumerate(folder_path.glob('*.mp4'), start=1):
-        with open(file_path, mode="rb") as file:
-            await bot.send_video(callback_query.message.chat.id, file, width=1080, height=1920, caption=f"{index} файл!")
-    
-    
+    # Send each processed video file
+    videos_presented = False
+    if videos_path:
+        videos_presented = True
 
+        media_group = []
+        for index, file_path in enumerate(videos_path, start=1):
+            with open(file_path, mode="rb") as file:
+                video_data = BytesIO(file.read())
+                video_data.seek(0)
+                media_group.append(
+                    InputMediaVideo(video_data, width=1080, height=1920, caption=f"{index} відео!")
+                )
+        await bot.send_media_group(callback_query.message.chat.id, media_group)
 
+    # Cleanup files
     cleanup_user_files(user_id, main_video, background_video, footage_path)
-    await callback_query.message.answer("Обробка завершена!")
-    
+    if videos_presented:
+        await callback_query.message.answer("Обробка завершена!\nЩоб створити нове натисніть /start")
+    else:
+        await callback_query.message.answer("Не вдалося обробити, перевірте налаштування та спробуйте ще раз! \n/start")
     
 def register_callbacks(dp: Dispatcher):
     dp.register_callback_query_handler(handle_upload_video, lambda c: c.data == 'check')
 
 
-def process_video_task(user_id, main_video, fragments_count, fragments_lenght, footage_path, position, background_option, background_video, quality="1080p"
-        # callback_query, bot
+def process_video_task(user_id, main_video, fragments_count, fragments_lenght, footage_path, position, background_option, background_video, quality="1080p", tone=0.0
     ):
     process_video_in_parallel(
         main_video,
@@ -621,13 +672,11 @@ def process_video_task(user_id, main_video, fragments_count, fragments_lenght, f
         num_segments=fragments_count,
         segment_duration=fragments_lenght,
         footage_path=footage_path,
-        position=position,
         background_option=background_option,
         background_video_path=background_video,
-        quality=quality
-        # user_id=user_id,
-        # callback_query=callback_query,
-        # bot=bot
+        quality=quality,
+        audio_tone_shift=tone,
+        position=position,
     )
 
 def cleanup_user_files(user_id, main_video, background_video, footage_path):
@@ -637,5 +686,12 @@ def cleanup_user_files(user_id, main_video, background_video, footage_path):
     if footage_path:
         os.remove(footage_path)
         del user_data[user_id]["footage"]
-    # os.remove(main_video)
-    # os.remove(f"{user_id}_{final_video_name}")
+    try:
+        downloads_folder_path = Path(f"downloads/{user_id}")
+        segments_folder_path = Path(f"downloads/{user_id}/segments")
+        for mp4_file in segments_folder_path.glob("*.mp4"):
+            mp4_file.unlink() 
+        for mp4_file in downloads_folder_path.glob("*.mp4"):
+            mp4_file.unlink() 
+    except Exception:
+        pass

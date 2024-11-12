@@ -45,12 +45,13 @@ def edit_media(user_data):
     }
     selected_position = position_names.get(user_data.get('position'), "")
 
-    mirror_status = "✅Віддзеркалення" if user_data.get('mirror', 0) == 1 else "☑️Віддзеркалення"
+    # mirror_status = "✅Віддзеркалення" if user_data.get('mirror', 0) == 1 else "☑️Віддзеркалення"
     fragment_count = user_data.get('fragment_count', 0)
     segment_length = user_data.get('segment_length', 0)
     quality = user_data.get('quality', '720p')
+    selected_tone = user_data.get("tone", 0.0)
 
-    if segment_length > 0:
+    if isinstance(segment_length, int) and segment_length > 0:
         minutes = segment_length // 60
         seconds = segment_length % 60
 
@@ -62,6 +63,8 @@ def edit_media(user_data):
                 segment_length_label += f" {seconds} сек"
             else:
                 segment_length_label += f"{seconds} сек"
+    elif segment_length == "auto":
+        segment_length_label = "Автоматично"
     else:
         segment_length_label = ""
 
@@ -76,7 +79,8 @@ def edit_media(user_data):
         InlineKeyboardButton(f"Довжина: {segment_length_label}", callback_data="segment_length"),
         InlineKeyboardButton(f"Задній фон: {selected_effect_name}", callback_data="background"),
         InlineKeyboardButton(f"Позиція: {selected_position}", callback_data="position"),
-        InlineKeyboardButton(mirror_status, callback_data="reflection"),
+        InlineKeyboardButton(f"Тональність: {selected_tone}", callback_data="tone"),
+        # InlineKeyboardButton(mirror_status, callback_data="reflection"),
         InlineKeyboardButton(f"Якість: {quality}", callback_data="quatity"),
     )
     keyboard.add(

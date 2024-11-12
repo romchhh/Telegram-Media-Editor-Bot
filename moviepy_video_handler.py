@@ -1,8 +1,12 @@
 import os
 import cv2
-from moviepy.editor import VideoFileClip, CompositeVideoClip
+import librosa
+from moviepy.editor import VideoFileClip, CompositeVideoClip, AudioFileClip
+from moviepy.audio.AudioClip import AudioArrayClip
 from moviepy.video.fx.resize import resize
 from moviepy.video.fx.crop import crop
+from scipy.io.wavfile import write
+import tempfile
 import numpy as np
 
 class VideoProcessor:
@@ -12,7 +16,7 @@ class VideoProcessor:
             self.target_height=1920
         else:
             self.target_width = 720
-            self.target_height = 1080
+            self.target_height = 1280
         self.video = video
         self.video_duration = self.video.duration
 
@@ -100,7 +104,7 @@ class VideoProcessor:
             final_video = resized_video.on_color(
                 size=(self.target_width, self.target_height),
                 color=background,
-                pos=(position, "center") if position == "center" else (position, "top")
+                pos=position
             )
         else:
             final_video = CompositeVideoClip([background, resized_video.set_position(("center", position))])
@@ -140,7 +144,7 @@ class VideoProcessor:
         
         return background_video.fl(composite_frame, apply_to='mask'), greenscreen
 
-    def process(self, output_path, footage_path: None | str, position="center", background_option="blurred", background_video_path=None):
+    def process(self, output_path, footage_path: None | str, position="center", background_option="blurred", background_video_path=None, audio_tone_shift=0):
         final_video = self.resize_and_position_video(
             position=position, 
             background_option=background_option,
@@ -149,42 +153,39 @@ class VideoProcessor:
 
         if footage_path:
             final_video, greenscreen = self.apply_greenscreen_effect(final_video, footage_path)
-            
+        
 
-        final_video.write_videofile(output_path, codec="hevc", threads=8, fps=30, ffmpeg_params=["-preset", "ultrafast"])
+        if audio_tone_shift != 0:
+            audio = self.video.audio
+            final_audio = self.change_audio_tone(audio, shift_factor=audio_tone_shift)
+            final_video = final_video.set_audio(final_audio)
+
+
+        final_video.write_videofile(output_path, codec="libx264", threads=8, fps=30, ffmpeg_params=["-preset", "ultrafast"])
         final_video.close()
         if footage_path:
             greenscreen.close()
 
+    def change_audio_tone(self, audio, shift_factor=0):
+        audio_array = audio.to_soundarray()
+        sample_rate = audio.fps  # Use the audio sample rate, not video fps
+
+        # If stereo, shift pitch for each channel individually
+        if audio_array.ndim > 1:
+            shifted_audio = np.array([
+                librosa.effects.pitch_shift(audio_array[:, ch], sr=sample_rate, n_steps=shift_factor)
+                for ch in range(audio_array.shape[1])
+            ]).T
+        else:
+            shifted_audio = librosa.effects.pitch_shift(audio_array, sr=sample_rate, n_steps=shift_factor)
+
+        # Reshape and normalize to the expected range for AudioArrayClip
+        shifted_audio = shifted_audio / np.max(np.abs(shifted_audio))  # Normalize to [-1, 1]
+        new_audio_clip = AudioArrayClip(shifted_audio, fps=sample_rate)
+
+        return new_audio_clip
 
 if __name__ == "__main__":
-    # input_video = "background.mp4"
-    # processor = VideoProcessor(input_video)
-
-    # processor.process(
-    #     "black_center.mp4", 
-    #     "cal.mp4",
-    #     position="center", 
-    #     background_option="black"
-    # )
-
-    # processor.process(
-    #     "blurred_top.mp4", 
-    #     "papich2.mp4", 
-    #     position="top", 
-    #     background_option="blurred"
-    # )
-
-    # input_video = "input.mp4"
-    # processor = VideoProcessor(input_video)
-    # processor.process(
-    #     "output.mp4",
-    #     "papich2.mp4",
-    #     position="top",
-    #     background_option="video",
-    #     backround_video_path="background1.mp4",
-    # )
-
     video = VideoFileClip("main.mp4")
     processor = VideoProcessor(video)
     processor.process(
@@ -195,12 +196,4 @@ if __name__ == "__main__":
         background_video_path="back.mp4",
     )
 
-    # processor.process(
-    #     "long_output.mp4",
-    #     footage_path=None,
-    #     # "papich2.mp4",
-    #     position="top",
-    #     background_option="video",
-    #     background_video_path="background1.mp4",
-    # )
     
